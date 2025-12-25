@@ -169,6 +169,12 @@ class BeachSimulator:
         # Track which sand cells need stability check (optimization)
         self.dirty_sand_cells = set()
         
+        # Performance optimization: throttle expensive operations
+        self.erosion_timer = 0.0
+        self.erosion_interval = 0.1  # Check erosion every 0.1 seconds instead of every frame
+        self.collision_update_timer = 0.0
+        self.collision_update_interval = 0.05  # Update collision shapes every 0.05 seconds
+        
         # Initialize sand bitmap and create everything
         self.initialize_sand_bitmap()
         self.create_boundaries()
@@ -548,9 +554,8 @@ class BeachSimulator:
                             did_action = True
                             break
         
-        # Update collision shapes if sand changed
+        # Mark sand as dirty if changed (collision update handled in update() with throttling)
         if sand_changed:
-            self.create_sand_collision()
             self.sand_dirty = True
     
     def check_sand_stability(self, row, col):
@@ -644,26 +649,37 @@ class BeachSimulator:
         for _ in range(steps):
             self.space.step(step_dt)
         
-        # Process erosion/deposition
-        self.process_erosion_deposition()
+        # Throttle expensive operations
+        self.erosion_timer += dt
+        if self.erosion_timer >= self.erosion_interval:
+            self.erosion_timer = 0.0
+            # Process erosion/deposition (throttled)
+            self.process_erosion_deposition()
         
         # Process sand gravity
         self.process_sand_gravity()
         
-        # Safety check for wave wall
+        # Throttle collision shape updates
+        self.collision_update_timer += dt
+        needs_collision_update = False
+        if self.collision_update_timer >= self.collision_update_interval:
+            self.collision_update_timer = 0.0
+            needs_collision_update = True
+        
+        # Combined safety checks (more efficient - single loop)
         wall_x = self.wave_body.position.x + WAVE_WALL_THICKNESS
         for body in self.water_bodies:
-            if body.position.x > wall_x:
-                body.position = (wall_x - PARTICLE_RADIUS - 1, body.position.y)
-                body.velocity = (min(0, body.velocity.x), body.velocity.y)
-        
-        # Safety check: push water out of sand
-        for body in self.water_bodies:
             wx, wy = body.position
+            
+            # Wave wall check
+            if wx > wall_x:
+                body.position = (wall_x - PARTICLE_RADIUS - 1, wy)
+                body.velocity = (min(0, body.velocity.x), body.velocity.y)
+            
+            # Sand collision check
             col = int(wx / SAND_CELL_SIZE)
             row = int(wy / SAND_CELL_SIZE)
             
-            # Check if water is inside sand
             if 0 <= col < self.sand_cols and 0 <= row < self.sand_rows:
                 if self.sand_bitmap[row][col]:
                     # Find the surface above this point
@@ -677,6 +693,11 @@ class BeachSimulator:
                     # Dampen downward velocity
                     if body.velocity.y > 0:
                         body.velocity = (body.velocity.x, -body.velocity.y * 0.3)
+        
+        # Update collision shapes if needed and sand changed
+        if needs_collision_update and self.sand_dirty:
+            self.create_sand_collision()
+            self.sand_dirty = False
     
     def render_sand_surface(self):
         """Render sand to a surface for performance"""
