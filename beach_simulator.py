@@ -1,5 +1,5 @@
 """
-Beach Simulator using Pymunk for 2D physics
+Beach Simulator using Pymunk for 2D physics with bitmap-based sand
 """
 import pygame
 import pymunk
@@ -14,6 +14,9 @@ pygame.init()
 WINDOW_WIDTH = 1200
 WINDOW_HEIGHT = 800
 FPS = 60
+
+# Sand bitmap resolution (pixels per cell)
+SAND_CELL_SIZE = 4
 
 # Colors
 SAND_COLOR = (238, 203, 173)
@@ -32,25 +35,25 @@ SAND_LEFT_Y = WINDOW_HEIGHT * (1/3)  # 2/3 from top
 SAND_RIGHT_Y = WINDOW_HEIGHT - 50     # Near bottom
 
 # Sand texture parameters
-SAND_BUMP_COUNT = 40  # Number of bump points along the surface
-SAND_BUMP_HEIGHT = 15  # Maximum random bump height (pixels)
+SAND_BUMP_COUNT = 12  # Number of bump control points (fewer = smoother)
+SAND_BUMP_HEIGHT = 20  # Maximum random bump height (pixels)
 
 # Water fill area
-WATER_FILL_TOP = WINDOW_HEIGHT * 0.35  # Higher water level (lower number = more water)
+WATER_FILL_TOP = WINDOW_HEIGHT * 0.35
 
 # Wave generator parameters (oscillating wall)
-WAVE_WALL_THICKNESS = 20  # Much thicker to prevent tunneling
+WAVE_WALL_THICKNESS = 20
 
 # Fast wave (primary oscillation)
-WAVE_FAST_AMPLITUDE = 40  # How far the wall moves left/right
-WAVE_FAST_FREQUENCY = 0.25  # Oscillations per second (Hz)
+WAVE_FAST_AMPLITUDE = 40
+WAVE_FAST_FREQUENCY = 0.25
 
-# Slow wave (secondary oscillation - creates longer swells)
-WAVE_SLOW_AMPLITUDE = 120  # 3x the fast wave amplitude
-WAVE_SLOW_PERIOD = 10.0  # Default period in seconds (frequency = 1/period)
+# Slow wave (secondary oscillation)
+WAVE_SLOW_AMPLITUDE = 120
+WAVE_SLOW_PERIOD = 10.0
 
-# Base position needs to accommodate both amplitudes
-WAVE_WALL_BASE_X = WINDOW_WIDTH - 40 - WAVE_SLOW_AMPLITUDE  # Start further right
+# Base position
+WAVE_WALL_BASE_X = WINDOW_WIDTH - 40 - WAVE_SLOW_AMPLITUDE
 
 # Collision types
 COLLISION_WATER = 1
@@ -64,31 +67,19 @@ CAT_SAND = 0b0010
 CAT_BOUNDARY = 0b0100
 CAT_WAVE_WALL = 0b1000
 
-# Collision masks (what each category collides with)
-# Water collides with everything
+# Collision masks
 MASK_WATER = CAT_WATER | CAT_SAND | CAT_BOUNDARY | CAT_WAVE_WALL
-# Sand collides with water, sand, boundary - NOT wave wall
 MASK_SAND = CAT_WATER | CAT_SAND | CAT_BOUNDARY
-# Boundary collides with everything
 MASK_BOUNDARY = CAT_WATER | CAT_SAND | CAT_BOUNDARY | CAT_WAVE_WALL
-# Wave wall only collides with water
 MASK_WAVE_WALL = CAT_WATER
-
-# Sand particle parameters
-SAND_PARTICLE_RADIUS = 2.5
-SAND_PARTICLE_MASS = 2.0  # Heavier than water
-SAND_PARTICLE_FRICTION = 0.9  # High friction
-SAND_PARTICLE_ELASTICITY = 0.05
-SAND_PARTICLE_SPACING = SAND_PARTICLE_RADIUS * 2.5
-SAND_LAYERS = 8  # Number of layers of sand particles below surface
 
 # Erosion/deposition parameters
 SANDINESS_MIN = 0
 SANDINESS_MAX = 10
-PICKUP_PROB_MIN = 0.003  # 30% per second at high sandiness (per frame: /60)
-PICKUP_PROB_MAX = 0.005  # 50% per second at low sandiness
-DEPOSIT_PROB_MIN = 0.003  # 30% per second at low sandiness
-DEPOSIT_PROB_MAX = 0.005  # 50% per second at high sandiness
+PICKUP_PROB_MIN = 0.01   # 1% per frame at high sandiness
+PICKUP_PROB_MAX = 0.02   # 2% per frame at low sandiness
+DEPOSIT_PROB_MIN = 0.01  # 1% per frame at low sandiness
+DEPOSIT_PROB_MAX = 0.02  # 2% per frame at high sandiness
 
 
 class Slider:
@@ -101,41 +92,33 @@ class Slider:
         self.label = label
         self.dragging = False
         
-        # Colors
-        self.bg_color = (200, 200, 200)
-        self.fg_color = (100, 150, 200)
-        self.handle_color = (50, 100, 150)
+        self.bg_color = (100, 100, 100)
+        self.fg_color = (150, 150, 200)
+        self.handle_color = (200, 200, 220)
         self.text_color = (0, 0, 0)
         
-        # Handle
-        self.handle_width = 12
         self.handle_rect = self._get_handle_rect()
     
     def _get_handle_rect(self):
-        """Calculate handle position based on current value"""
         t = (self.value - self.min_val) / (self.max_val - self.min_val)
-        handle_x = self.rect.x + t * (self.rect.width - self.handle_width)
-        return pygame.Rect(handle_x, self.rect.y - 2, self.handle_width, self.rect.height + 4)
+        handle_x = self.rect.x + int(t * self.rect.width) - 5
+        return pygame.Rect(handle_x, self.rect.y - 3, 10, self.rect.height + 6)
     
     def _value_from_x(self, x):
-        """Calculate value from x position"""
         t = (x - self.rect.x) / self.rect.width
         t = max(0, min(1, t))
         return self.min_val + t * (self.max_val - self.min_val)
     
     def handle_event(self, event):
-        """Handle mouse events, return True if value changed"""
         if event.type == pygame.MOUSEBUTTONDOWN:
-            if event.button == 1:
-                if self.handle_rect.collidepoint(event.pos) or self.rect.collidepoint(event.pos):
-                    self.dragging = True
-                    self.value = self._value_from_x(event.pos[0])
-                    self.handle_rect = self._get_handle_rect()
-                    return True
+            if self.handle_rect.collidepoint(event.pos) or self.rect.collidepoint(event.pos):
+                self.dragging = True
+                self.value = self._value_from_x(event.pos[0])
+                self.handle_rect = self._get_handle_rect()
+                return True
         
         elif event.type == pygame.MOUSEBUTTONUP:
-            if event.button == 1:
-                self.dragging = False
+            self.dragging = False
         
         elif event.type == pygame.MOUSEMOTION:
             if self.dragging:
@@ -146,68 +129,56 @@ class Slider:
         return False
     
     def draw(self, screen):
-        """Draw the slider"""
         font = pygame.font.Font(None, 20)
-        
-        # Draw label
         label_text = font.render(f"{self.label}: {self.value:.2f}", True, self.text_color)
         screen.blit(label_text, (self.rect.x, self.rect.y - 18))
-        
-        # Draw background track
         pygame.draw.rect(screen, self.bg_color, self.rect, border_radius=3)
-        
-        # Draw filled portion
         t = (self.value - self.min_val) / (self.max_val - self.min_val)
         filled_width = int(t * self.rect.width)
         filled_rect = pygame.Rect(self.rect.x, self.rect.y, filled_width, self.rect.height)
         pygame.draw.rect(screen, self.fg_color, filled_rect, border_radius=3)
-        
-        # Draw handle
         pygame.draw.rect(screen, self.handle_color, self.handle_rect, border_radius=2)
 
 
 class BeachSimulator:
     def __init__(self):
         self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-        pygame.display.set_caption("Pymunk Beach Simulator")
+        pygame.display.set_caption("Beach Simulator - Bitmap Sand")
         self.clock = pygame.time.Clock()
         self.running = True
         self.time = 0.0
+        self.last_frame_time = 0.0
         
         # Create pymunk space
         self.space = pymunk.Space()
         self.space.gravity = (0, GRAVITY)
-        
-        # Calculate sand gravity direction (normal to average slope)
-        # Average slope goes from (0, SAND_LEFT_Y) to (WINDOW_WIDTH, SAND_RIGHT_Y)
-        slope_dx = WINDOW_WIDTH
-        slope_dy = SAND_RIGHT_Y - SAND_LEFT_Y
-        slope_len = math.sqrt(slope_dx**2 + slope_dy**2)
-        # Normal to slope (perpendicular, pointing "into" the sand)
-        self.sand_gravity_dir = (slope_dy / slope_len, -slope_dx / slope_len)
-        # Make sure it points generally downward
-        if self.sand_gravity_dir[1] < 0:
-            self.sand_gravity_dir = (-self.sand_gravity_dir[0], -self.sand_gravity_dir[1])
-        
-        # Reduce collision iterations for performance
         self.space.iterations = 10
         
-        # Sand and water particle tracking
-        self.sand_bodies = []
-        self.sand_shapes = []
-        self.water_sandiness = {}  # Maps water body to sandiness value
+        # Sand bitmap dimensions
+        self.sand_cols = WINDOW_WIDTH // SAND_CELL_SIZE
+        self.sand_rows = WINDOW_HEIGHT // SAND_CELL_SIZE
         
-        # Create boundaries and particles
+        # Water particle tracking
+        self.water_bodies = []
+        self.water_shapes = []
+        self.water_sandiness = {}
+        
+        # Sand collision shapes (will be updated when sand changes)
+        self.sand_collision_shapes = []
+        
+        # Track which sand cells need stability check (optimization)
+        self.dirty_sand_cells = set()
+        
+        # Initialize sand bitmap and create everything
+        self.initialize_sand_bitmap()
         self.create_boundaries()
-        self.create_sand_particles()
+        self.create_sand_collision()
         self.create_wave_generator()
         self.create_water_particles()
         
-        # Set up collision handler for water-sand interaction
-        self.setup_collision_handlers()
-        
-        # Debug draw options (optional)
-        self.draw_options = pymunk.pygame_util.DrawOptions(self.screen)
+        # Pre-render sand surface for performance
+        self.sand_surface = None
+        self.sand_dirty = True
         
         # UI controls
         self.fast_freq_slider = Slider(
@@ -242,45 +213,99 @@ class BeachSimulator:
         )
         self.wave_slow_amplitude = WAVE_SLOW_AMPLITUDE
     
-    def generate_sand_surface(self):
-        """Generate bumpy sand surface points"""
-        self.sand_points = []
+    def initialize_sand_bitmap(self):
+        """Initialize the sand bitmap with a sloped beach"""
+        self.sand_bitmap = [[False] * self.sand_cols for _ in range(self.sand_rows)]
         
+        # Generate bump control points
+        control_points = []
         for i in range(SAND_BUMP_COUNT + 1):
             t = i / SAND_BUMP_COUNT
-            x = t * WINDOW_WIDTH
-            
-            # Base height (linear interpolation)
             base_y = SAND_LEFT_Y + t * (SAND_RIGHT_Y - SAND_LEFT_Y)
             
-            # Add random bump (except at edges for clean connection)
-            if i == 0 or i == SAND_BUMP_COUNT:
-                bump = 0
-            else:
+            # Add random bumps (except at edges)
+            if 0 < i < SAND_BUMP_COUNT:
                 bump = random.uniform(-SAND_BUMP_HEIGHT, SAND_BUMP_HEIGHT)
+            else:
+                bump = 0
             
-            self.sand_points.append((x, base_y + bump))
+            control_points.append(base_y + bump)
+        
+        # Interpolate smoothly between control points for each column
+        self.surface_heights = []
+        for col in range(self.sand_cols):
+            t = col / (self.sand_cols - 1) if self.sand_cols > 1 else 0
+            
+            # Find which control point segment we're in
+            segment_t = t * SAND_BUMP_COUNT
+            i = int(segment_t)
+            i = min(i, SAND_BUMP_COUNT - 1)  # Clamp to valid range
+            
+            # Local t within segment (0 to 1)
+            local_t = segment_t - i
+            
+            # Smooth interpolation (smoothstep)
+            smooth_t = local_t * local_t * (3 - 2 * local_t)
+            
+            # Interpolate between control points
+            y = control_points[i] + smooth_t * (control_points[i + 1] - control_points[i])
+            self.surface_heights.append(y)
+        
+        # Fill bitmap below the surface
+        for col in range(self.sand_cols):
+            surface_row = int(self.surface_heights[col] / SAND_CELL_SIZE)
+            for row in range(surface_row, self.sand_rows):
+                self.sand_bitmap[row][col] = True
+    
+    def get_sand_surface_y(self, x):
+        """Get the sand surface Y at a given X coordinate"""
+        col = int(x / SAND_CELL_SIZE)
+        col = max(0, min(col, self.sand_cols - 1))
+        return self.surface_heights[col]
+    
+    def is_sand_edge(self, row, col):
+        """Check if a sand cell is on the edge (adjacent to empty space)"""
+        if not self.sand_bitmap[row][col]:
+            return False
+        
+        # Check 4-neighbors
+        neighbors = [
+            (row - 1, col), (row + 1, col),
+            (row, col - 1), (row, col + 1)
+        ]
+        
+        for nr, nc in neighbors:
+            if 0 <= nr < self.sand_rows and 0 <= nc < self.sand_cols:
+                if not self.sand_bitmap[nr][nc]:
+                    return True
+            elif nr < 0:  # Above the bitmap = empty
+                return True
+        
+        return False
+    
+    def is_adjacent_to_sand(self, row, col):
+        """Check if an empty cell is adjacent to sand"""
+        if row < 0 or row >= self.sand_rows or col < 0 or col >= self.sand_cols:
+            return False
+        if self.sand_bitmap[row][col]:
+            return False  # Already sand
+        
+        # Check 4-neighbors
+        neighbors = [
+            (row - 1, col), (row + 1, col),
+            (row, col - 1), (row, col + 1)
+        ]
+        
+        for nr, nc in neighbors:
+            if 0 <= nr < self.sand_rows and 0 <= nc < self.sand_cols:
+                if self.sand_bitmap[nr][nc]:
+                    return True
+        
+        return False
     
     def create_boundaries(self):
-        """Create static boundary shapes (walls only - sand is now particles)"""
-        # Generate bumpy sand surface (used for initial sand particle placement)
-        self.generate_sand_surface()
-        
-        # Add collision for the solid sand wedge (below the particle layers)
-        base_offset = SAND_LAYERS * SAND_PARTICLE_SPACING
-        wedge_top = pymunk.Segment(
-            self.space.static_body,
-            (0, SAND_LEFT_Y + base_offset),
-            (WINDOW_WIDTH, SAND_RIGHT_Y + base_offset),
-            3
-        )
-        wedge_top.friction = 0.8
-        wedge_top.elasticity = 0.1
-        wedge_top.collision_type = COLLISION_BOUNDARY
-        wedge_top.filter = pymunk.ShapeFilter(categories=CAT_BOUNDARY, mask=MASK_BOUNDARY)
-        self.space.add(wedge_top)
-        
-        # Add a solid floor beneath the sand
+        """Create static boundary shapes (walls only)"""
+        # Floor
         floor = pymunk.Segment(
             self.space.static_body,
             (0, WINDOW_HEIGHT + 20),
@@ -305,9 +330,7 @@ class BeachSimulator:
         left_wall.filter = pymunk.ShapeFilter(categories=CAT_BOUNDARY, mask=MASK_BOUNDARY)
         self.space.add(left_wall)
         
-        # Note: Right wall is now the wave generator (kinematic body)
-        
-        # Top boundary (to prevent particles escaping)
+        # Top boundary
         top_wall = pymunk.Segment(
             self.space.static_body,
             (0, -10), (WINDOW_WIDTH, -10),
@@ -318,143 +341,82 @@ class BeachSimulator:
         top_wall.filter = pymunk.ShapeFilter(categories=CAT_BOUNDARY, mask=MASK_BOUNDARY)
         self.space.add(top_wall)
     
-    def get_sand_height_at(self, x):
-        """Get sand surface y coordinate at given x (interpolated from bumpy surface)"""
-        # Clamp x to valid range
-        x = max(0, min(WINDOW_WIDTH, x))
+    def create_sand_collision(self):
+        """Create collision shapes along the sand surface"""
+        # Remove old collision shapes
+        for shape in self.sand_collision_shapes:
+            self.space.remove(shape)
+        self.sand_collision_shapes.clear()
         
-        # Find which segment we're in
-        for i in range(len(self.sand_points) - 1):
-            x1, y1 = self.sand_points[i]
-            x2, y2 = self.sand_points[i + 1]
+        # Find the surface of the sand bitmap
+        surface_points = []
+        for col in range(self.sand_cols):
+            # Find topmost sand cell in this column
+            for row in range(self.sand_rows):
+                if self.sand_bitmap[row][col]:
+                    x = col * SAND_CELL_SIZE
+                    y = row * SAND_CELL_SIZE
+                    surface_points.append((x, y))
+                    break
+            else:
+                # No sand in this column
+                x = col * SAND_CELL_SIZE
+                y = WINDOW_HEIGHT
+                surface_points.append((x, y))
+        
+        # Create segments along the surface with good thickness
+        for i in range(len(surface_points) - 1):
+            p1 = surface_points[i]
+            p2 = surface_points[i + 1]
             
-            if x1 <= x <= x2:
-                # Linear interpolation within segment
-                if x2 == x1:
-                    return y1
-                t = (x - x1) / (x2 - x1)
-                return y1 + t * (y2 - y1)
+            segment = pymunk.Segment(
+                self.space.static_body,
+                p1, p2,
+                SAND_CELL_SIZE  # Thicker segments to prevent tunneling
+            )
+            segment.friction = 0.8
+            segment.elasticity = 0.1
+            segment.collision_type = COLLISION_SAND
+            segment.filter = pymunk.ShapeFilter(categories=CAT_SAND, mask=MASK_SAND)
+            self.space.add(segment)
+            self.sand_collision_shapes.append(segment)
         
-        # Fallback to last point
-        return self.sand_points[-1][1]
-    
-    def create_sand_particles(self):
-        """Create sand particles along and below the bumpy surface"""
-        self.sand_bodies = []
-        self.sand_shapes = []
-        
-        spacing = SAND_PARTICLE_SPACING
-        
-        # Create sand particles in layers below the surface
-        x = SAND_PARTICLE_RADIUS
-        while x < WINDOW_WIDTH - SAND_PARTICLE_RADIUS:
-            surface_y = self.get_sand_height_at(x)
+        # Add vertical segments at steep height changes to block particles
+        for i in range(len(surface_points) - 1):
+            p1 = surface_points[i]
+            p2 = surface_points[i + 1]
             
-            # Create multiple layers of sand below surface
-            for layer in range(SAND_LAYERS):
-                y = surface_y + layer * spacing
-                
-                # Don't create sand below screen
-                if y > WINDOW_HEIGHT - SAND_PARTICLE_RADIUS:
-                    continue
-                
-                # Add some randomness
-                px = x + random.uniform(-1, 1)
-                py = y + random.uniform(-1, 1)
-                
-                self.create_single_sand_particle(px, py)
-            
-            x += spacing
-        
-        print(f"Created {len(self.sand_bodies)} sand particles")
-    
-    def create_single_sand_particle(self, x, y):
-        """Create a single sand particle at the given position"""
-        body = pymunk.Body(SAND_PARTICLE_MASS, 
-                          pymunk.moment_for_circle(SAND_PARTICLE_MASS, 0, SAND_PARTICLE_RADIUS))
-        body.position = (x, y)
-        
-        shape = pymunk.Circle(body, SAND_PARTICLE_RADIUS)
-        shape.friction = SAND_PARTICLE_FRICTION
-        shape.elasticity = SAND_PARTICLE_ELASTICITY
-        shape.collision_type = COLLISION_SAND
-        shape.filter = pymunk.ShapeFilter(categories=CAT_SAND, mask=MASK_SAND)
-        
-        self.space.add(body, shape)
-        self.sand_bodies.append(body)
-        self.sand_shapes.append(shape)
-        
-        return body, shape
-    
-    def setup_collision_handlers(self):
-        """Set up collision handling - we'll do erosion in update loop instead"""
-        # Collision handlers are complex in pymunk, so we handle water-sand
-        # interaction in the update loop by checking distances
-        pass
-    
-    def process_erosion_deposition(self):
-        """Process water-sand interactions for erosion and deposition"""
-        contact_distance = PARTICLE_RADIUS + SAND_PARTICLE_RADIUS + 2
-        
-        sand_to_remove = []
-        deposits = []
-        
-        for water_body in self.water_bodies:
-            wx, wy = water_body.position
-            sandiness = self.water_sandiness.get(water_body, 0)
-            
-            # Check for nearby sand particles
-            for i, sand_body in enumerate(self.sand_bodies):
-                if i in sand_to_remove:
-                    continue
-                    
-                sx, sy = sand_body.position
-                dist = math.sqrt((wx - sx)**2 + (wy - sy)**2)
-                
-                if dist < contact_distance:
-                    # Calculate pickup probability (inversely proportional to sandiness)
-                    pickup_prob = PICKUP_PROB_MAX - (sandiness / SANDINESS_MAX) * (PICKUP_PROB_MAX - PICKUP_PROB_MIN)
-                    
-                    # Calculate deposit probability (proportional to sandiness)
-                    deposit_prob = DEPOSIT_PROB_MIN + (sandiness / SANDINESS_MAX) * (DEPOSIT_PROB_MAX - DEPOSIT_PROB_MIN)
-                    
-                    # Try to pick up sand
-                    if sandiness < SANDINESS_MAX and random.random() < pickup_prob:
-                        sand_to_remove.append(i)
-                        self.water_sandiness[water_body] = sandiness + 1
-                        sandiness += 1
-                        break  # Only pick up one sand per frame
-                    
-                    # Try to deposit sand
-                    elif sandiness > SANDINESS_MIN and random.random() < deposit_prob:
-                        deposits.append((wx + random.uniform(-3, 3), wy + random.uniform(0, 5)))
-                        self.water_sandiness[water_body] = sandiness - 1
-                        sandiness -= 1
-                        break  # Only deposit one sand per frame
-        
-        # Remove picked up sand (in reverse order)
-        for i in sorted(sand_to_remove, reverse=True):
-            body = self.sand_bodies[i]
-            shape = self.sand_shapes[i]
-            self.space.remove(body, shape)
-            del self.sand_bodies[i]
-            del self.sand_shapes[i]
-        
-        # Create deposited sand
-        for x, y in deposits:
-            self.create_single_sand_particle(x, y)
+            height_diff = abs(p2[1] - p1[1])
+            if height_diff > SAND_CELL_SIZE:
+                # Add a vertical blocker
+                if p2[1] > p1[1]:  # Slope goes down to the right
+                    vert_segment = pymunk.Segment(
+                        self.space.static_body,
+                        (p2[0], p1[1]), (p2[0], p2[1]),
+                        SAND_CELL_SIZE
+                    )
+                else:  # Slope goes up to the right
+                    vert_segment = pymunk.Segment(
+                        self.space.static_body,
+                        (p1[0], p2[1]), (p1[0], p1[1]),
+                        SAND_CELL_SIZE
+                    )
+                vert_segment.friction = 0.8
+                vert_segment.elasticity = 0.1
+                vert_segment.collision_type = COLLISION_SAND
+                vert_segment.filter = pymunk.ShapeFilter(categories=CAT_SAND, mask=MASK_SAND)
+                self.space.add(vert_segment)
+                self.sand_collision_shapes.append(vert_segment)
     
     def create_wave_generator(self):
         """Create the oscillating wave generator wall"""
-        # Kinematic body - we control its position directly
         self.wave_body = pymunk.Body(body_type=pymunk.Body.KINEMATIC)
         self.wave_body.position = (WAVE_WALL_BASE_X, WINDOW_HEIGHT / 2)
         
-        # Vertical wall segment - thick to prevent tunneling
         self.wave_shape = pymunk.Segment(
             self.wave_body,
-            (0, -WINDOW_HEIGHT),  # Top of wall (relative to body)
-            (0, WINDOW_HEIGHT),   # Bottom of wall (relative to body)
+            (0, -WINDOW_HEIGHT),
+            (0, WINDOW_HEIGHT),
             WAVE_WALL_THICKNESS
         )
         self.wave_shape.friction = 0.3
@@ -464,8 +426,7 @@ class BeachSimulator:
         
         self.space.add(self.wave_body, self.wave_shape)
         
-        # Add a static backup wall at the far right edge
-        # This catches any particles that might slip through
+        # Backup wall
         backup_wall = pymunk.Segment(
             self.space.static_body,
             (WINDOW_WIDTH + 10, 0),
@@ -479,53 +440,44 @@ class BeachSimulator:
         self.space.add(backup_wall)
     
     def update_wave_generator(self):
-        """Update wave generator position based on combined sinusoidal motion"""
-        # Fast wave (primary oscillation)
+        """Update wave generator position"""
         fast_freq = self.wave_fast_frequency
         fast_amp = self.wave_fast_amplitude
         fast_offset = fast_amp * math.sin(2 * math.pi * fast_freq * self.time)
         fast_velocity = fast_amp * 2 * math.pi * fast_freq * math.cos(2 * math.pi * fast_freq * self.time)
         
-        # Slow wave (secondary oscillation - creates longer swells)
-        slow_freq = 1.0 / self.wave_slow_period  # Convert period to frequency
+        slow_freq = 1.0 / self.wave_slow_period
         slow_amp = self.wave_slow_amplitude
         slow_offset = slow_amp * math.sin(2 * math.pi * slow_freq * self.time)
         slow_velocity = slow_amp * 2 * math.pi * slow_freq * math.cos(2 * math.pi * slow_freq * self.time)
         
-        # Combine both waves
         total_offset = fast_offset + slow_offset
         total_velocity = fast_velocity + slow_velocity
         
         new_x = WAVE_WALL_BASE_X + total_offset
         
-        # Update body position and velocity
         self.wave_body.position = (new_x, self.wave_body.position.y)
         self.wave_body.velocity = (total_velocity, 0)
     
     def create_water_particles(self):
-        """Create water particles as small circles"""
+        """Create water particles"""
         self.water_bodies = []
         self.water_shapes = []
         
-        spacing = PARTICLE_RADIUS * 2.8  # Tighter spacing for more water
+        spacing = PARTICLE_RADIUS * 2.8
         
-        # Don't spawn particles past the wave wall's leftmost position
-        # Account for both wave amplitudes when determining spawn area
         total_amplitude = WAVE_FAST_AMPLITUDE + WAVE_SLOW_AMPLITUDE
         max_x = WAVE_WALL_BASE_X - total_amplitude - WAVE_WALL_THICKNESS - PARTICLE_RADIUS * 2
         
         x = PARTICLE_RADIUS * 2
         while x < max_x:
-            sand_y = self.get_sand_height_at(x)
+            sand_y = self.get_sand_surface_y(x)
             
-            # Fill from water fill top down to just above sand
             y = WATER_FILL_TOP
             while y < sand_y - PARTICLE_RADIUS * 2:
-                # Add some randomness
                 px = x + random.uniform(-1, 1)
                 py = y + random.uniform(-1, 1)
                 
-                # Create particle
                 body = pymunk.Body(PARTICLE_MASS, pymunk.moment_for_circle(PARTICLE_MASS, 0, PARTICLE_RADIUS))
                 body.position = (px, py)
                 
@@ -539,7 +491,6 @@ class BeachSimulator:
                 self.water_bodies.append(body)
                 self.water_shapes.append(shape)
                 
-                # Initialize sandiness
                 self.water_sandiness[body] = 0
                 
                 y += spacing
@@ -548,58 +499,208 @@ class BeachSimulator:
         
         print(f"Created {len(self.water_bodies)} water particles")
     
+    def process_erosion_deposition(self):
+        """Process water-sand interactions using the bitmap"""
+        sand_changed = False
+        
+        for water_body in self.water_bodies:
+            wx, wy = water_body.position
+            sandiness = self.water_sandiness.get(water_body, 0)
+            
+            # Convert water position to bitmap cell
+            col = int(wx / SAND_CELL_SIZE)
+            row = int(wy / SAND_CELL_SIZE)
+            
+            # Check cells near the water particle
+            check_radius = 2  # Check nearby cells
+            did_action = False
+            
+            for dr in range(-check_radius, check_radius + 1):
+                if did_action:
+                    break
+                for dc in range(-check_radius, check_radius + 1):
+                    nr, nc = row + dr, col + dc
+                    
+                    if not (0 <= nr < self.sand_rows and 0 <= nc < self.sand_cols):
+                        continue
+                    
+                    # Calculate probability based on sandiness
+                    pickup_prob = PICKUP_PROB_MAX - (sandiness / SANDINESS_MAX) * (PICKUP_PROB_MAX - PICKUP_PROB_MIN)
+                    deposit_prob = DEPOSIT_PROB_MIN + (sandiness / SANDINESS_MAX) * (DEPOSIT_PROB_MAX - DEPOSIT_PROB_MIN)
+                    
+                    # Try to pick up sand (must be on edge)
+                    if self.sand_bitmap[nr][nc] and self.is_sand_edge(nr, nc):
+                        if sandiness < SANDINESS_MAX and random.random() < pickup_prob:
+                            self.sand_bitmap[nr][nc] = False
+                            self.mark_neighbors_dirty(nr, nc)  # Trigger gravity check
+                            self.water_sandiness[water_body] = sandiness + 1
+                            sand_changed = True
+                            did_action = True
+                            break
+                    
+                    # Try to deposit sand (must be adjacent to existing sand)
+                    elif not self.sand_bitmap[nr][nc] and self.is_adjacent_to_sand(nr, nc):
+                        if sandiness > SANDINESS_MIN and random.random() < deposit_prob:
+                            self.sand_bitmap[nr][nc] = True
+                            self.mark_neighbors_dirty(nr, nc)  # Trigger gravity check
+                            self.water_sandiness[water_body] = sandiness - 1
+                            sand_changed = True
+                            did_action = True
+                            break
+        
+        # Update collision shapes if sand changed
+        if sand_changed:
+            self.create_sand_collision()
+            self.sand_dirty = True
+    
+    def check_sand_stability(self, row, col):
+        """Check if a sand pixel is stable, returns (stable, new_row, new_col)"""
+        if not self.sand_bitmap[row][col]:
+            return True, row, col  # No sand here, nothing to do
+        
+        if row >= self.sand_rows - 1:
+            return True, row, col  # Bottom row is always stable
+        
+        def get_pixel(dr, dc):
+            nr, nc = row + dr, col + dc
+            if 0 <= nr < self.sand_rows and 0 <= nc < self.sand_cols:
+                return self.sand_bitmap[nr][nc]
+            return True  # Out of bounds = solid
+        
+        p1 = get_pixel(1, -1)   # below-left
+        p2 = get_pixel(1, 0)    # below
+        p3 = get_pixel(1, 1)    # below-right
+        p4 = get_pixel(0, -1)   # left
+        p6 = get_pixel(0, 1)    # right
+        p7 = get_pixel(-1, -1)  # above-left
+        p9 = get_pixel(-1, 1)   # above-right
+        
+        # Check stability conditions
+        if p2 and (p1 or p3):
+            return True, row, col
+        if p1 and p4 and p7:
+            return True, row, col
+        if p3 and p6 and p9:
+            return True, row, col
+        
+        # Unstable - determine where to move
+        if not p2:
+            return False, row + 1, col  # Fall down
+        else:
+            return False, row + 1, col - 1  # Slide down-left
+    
+    def mark_neighbors_dirty(self, row, col):
+        """Mark all 8 neighbors of a cell as needing stability check"""
+        for dr in range(-1, 2):
+            for dc in range(-1, 2):
+                if dr == 0 and dc == 0:
+                    continue
+                nr, nc = row + dr, col + dc
+                if 0 <= nr < self.sand_rows and 0 <= nc < self.sand_cols:
+                    self.dirty_sand_cells.add((nr, nc))
+    
+    def process_sand_gravity(self):
+        """Process sand gravity - only check dirty cells"""
+        if not self.dirty_sand_cells:
+            return
+        
+        sand_changed = False
+        
+        # Sort dirty cells by row (bottom to top) for proper processing
+        cells_to_check = sorted(self.dirty_sand_cells, key=lambda x: -x[0])
+        self.dirty_sand_cells.clear()
+        
+        for row, col in cells_to_check:
+            if not self.sand_bitmap[row][col]:
+                continue
+            
+            stable, new_row, new_col = self.check_sand_stability(row, col)
+            
+            if not stable:
+                # Remove from old position
+                self.sand_bitmap[row][col] = False
+                self.mark_neighbors_dirty(row, col)
+                
+                # Add to new position if valid
+                if 0 <= new_row < self.sand_rows and 0 <= new_col < self.sand_cols:
+                    self.sand_bitmap[new_row][new_col] = True
+                    self.mark_neighbors_dirty(new_row, new_col)
+                
+                sand_changed = True
+        
+        if sand_changed:
+            self.create_sand_collision()
+            self.sand_dirty = True
+    
     def update(self, dt):
         """Update simulation"""
         self.time += dt
         
-        # Update wave generator position (sinusoidal motion)
         self.update_wave_generator()
         
-        # Apply sand gravity (normal to average slope) to sand particles
-        sand_gx = self.sand_gravity_dir[0] * GRAVITY
-        sand_gy = self.sand_gravity_dir[1] * GRAVITY
-        for body in self.sand_bodies:
-            # Override gravity for sand particles
-            body.velocity = (
-                body.velocity.x + sand_gx * dt - self.space.gravity[0] * dt,
-                body.velocity.y + sand_gy * dt - self.space.gravity[1] * dt + GRAVITY * dt
-            )
-        
-        # Step physics simulation
-        # Use fixed timestep for stability
+        # Step physics
         step_dt = 1/60
         steps = max(1, int(dt / step_dt))
         for _ in range(steps):
             self.space.step(step_dt)
         
-        # Process erosion and deposition
+        # Process erosion/deposition
         self.process_erosion_deposition()
-            
-        # Safety check: push any particles that got past the wave wall back
+        
+        # Process sand gravity
+        self.process_sand_gravity()
+        
+        # Safety check for wave wall
         wall_x = self.wave_body.position.x + WAVE_WALL_THICKNESS
         for body in self.water_bodies:
             if body.position.x > wall_x:
                 body.position = (wall_x - PARTICLE_RADIUS - 1, body.position.y)
                 body.velocity = (min(0, body.velocity.x), body.velocity.y)
+        
+        # Safety check: push water out of sand
+        for body in self.water_bodies:
+            wx, wy = body.position
+            col = int(wx / SAND_CELL_SIZE)
+            row = int(wy / SAND_CELL_SIZE)
+            
+            # Check if water is inside sand
+            if 0 <= col < self.sand_cols and 0 <= row < self.sand_rows:
+                if self.sand_bitmap[row][col]:
+                    # Find the surface above this point
+                    surface_row = row
+                    while surface_row > 0 and self.sand_bitmap[surface_row - 1][col]:
+                        surface_row -= 1
+                    
+                    # Push water to just above the sand surface
+                    new_y = surface_row * SAND_CELL_SIZE - PARTICLE_RADIUS - 1
+                    body.position = (wx, new_y)
+                    # Dampen downward velocity
+                    if body.velocity.y > 0:
+                        body.velocity = (body.velocity.x, -body.velocity.y * 0.3)
+    
+    def render_sand_surface(self):
+        """Render sand to a surface for performance"""
+        self.sand_surface = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+        
+        for row in range(self.sand_rows):
+            for col in range(self.sand_cols):
+                if self.sand_bitmap[row][col]:
+                    x = col * SAND_CELL_SIZE
+                    y = row * SAND_CELL_SIZE
+                    pygame.draw.rect(
+                        self.sand_surface,
+                        SAND_COLOR,
+                        (x, y, SAND_CELL_SIZE, SAND_CELL_SIZE)
+                    )
+        
+        self.sand_dirty = False
     
     def draw_sand(self):
-        """Draw solid sand base wedge and sand particles"""
-        # First draw solid sand wedge underneath the particles
-        # This creates the base layer below the dynamic sand particles
-        base_offset = SAND_LAYERS * SAND_PARTICLE_SPACING  # How deep the particles go
-        sand_base_points = [
-            (0, SAND_LEFT_Y + base_offset),
-            (WINDOW_WIDTH, SAND_RIGHT_Y + base_offset),
-            (WINDOW_WIDTH, WINDOW_HEIGHT),
-            (0, WINDOW_HEIGHT),
-        ]
-        pygame.draw.polygon(self.screen, SAND_COLOR, sand_base_points)
+        """Draw sand from cached surface"""
+        if self.sand_dirty or self.sand_surface is None:
+            self.render_sand_surface()
         
-        # Draw sand particles on top
-        for body in self.sand_bodies:
-            x, y = int(body.position.x), int(body.position.y)
-            if 0 <= x < WINDOW_WIDTH and 0 <= y < WINDOW_HEIGHT:
-                pygame.draw.circle(self.screen, SAND_COLOR, (x, y), int(SAND_PARTICLE_RADIUS))
+        self.screen.blit(self.sand_surface, (0, 0))
     
     def draw_particles(self):
         """Draw water particles"""
@@ -611,10 +712,9 @@ class BeachSimulator:
     def draw_wave_generator(self):
         """Draw the wave generator wall"""
         x = int(self.wave_body.position.x)
-        # Draw a thick vertical line for the wave wall
         pygame.draw.line(
             self.screen,
-            (100, 100, 150),  # Grayish blue color
+            (100, 100, 150),
             (x, 0),
             (x, WINDOW_HEIGHT),
             WAVE_WALL_THICKNESS * 2
@@ -624,7 +724,7 @@ class BeachSimulator:
         """Draw UI elements"""
         font = pygame.font.Font(None, 24)
         
-        text = font.render(f"Water: {len(self.water_bodies)} | Sand: {len(self.sand_bodies)}", True, (0, 0, 0))
+        text = font.render(f"Water: {len(self.water_bodies)}", True, (0, 0, 0))
         self.screen.blit(text, (10, 10))
         
         fps = self.clock.get_fps()
@@ -633,6 +733,12 @@ class BeachSimulator:
         
         text = font.render("R: reset", True, (0, 0, 0))
         self.screen.blit(text, (10, 50))
+        
+        # Frame time (latency) in top right
+        frame_time_ms = self.last_frame_time * 1000
+        latency_text = font.render(f"{frame_time_ms:.1f} ms", True, (0, 0, 0))
+        text_rect = latency_text.get_rect()
+        self.screen.blit(latency_text, (WINDOW_WIDTH - text_rect.width - 10, 10))
     
     def draw(self):
         """Render everything"""
@@ -649,7 +755,7 @@ class BeachSimulator:
     
     def reset(self):
         """Reset simulation"""
-        # Remove all water particles
+        # Remove water particles
         for body, shape in zip(self.water_bodies, self.water_shapes):
             self.space.remove(body, shape)
         
@@ -657,22 +763,18 @@ class BeachSimulator:
         self.water_shapes.clear()
         self.water_sandiness.clear()
         
-        # Remove all sand particles
-        for body, shape in zip(self.sand_bodies, self.sand_shapes):
-            self.space.remove(body, shape)
+        # Reinitialize sand bitmap
+        self.initialize_sand_bitmap()
+        self.create_sand_collision()
+        self.sand_dirty = True
+        self.dirty_sand_cells.clear()
         
-        self.sand_bodies.clear()
-        self.sand_shapes.clear()
-        
-        # Regenerate sand surface and recreate particles
-        self.generate_sand_surface()
-        self.create_sand_particles()
+        # Recreate water
         self.create_water_particles()
     
     def handle_events(self):
         """Handle pygame events"""
         for event in pygame.event.get():
-            # Let sliders handle events first
             if self.fast_freq_slider.handle_event(event):
                 self.wave_fast_frequency = self.fast_freq_slider.value
             if self.slow_period_slider.handle_event(event):
@@ -692,13 +794,18 @@ class BeachSimulator:
     
     def run(self):
         """Main loop"""
+        import time
         while self.running:
+            frame_start = time.perf_counter()
+            
             dt = self.clock.tick(FPS) / 1000.0
             dt = min(dt, 1/30)
             
             self.handle_events()
             self.update(dt)
             self.draw()
+            
+            self.last_frame_time = time.perf_counter() - frame_start
         
         pygame.quit()
 
